@@ -59,3 +59,11 @@ func HighlightContent(code, filename string) string {
 
 	return buf.String()
 }
+
+func ResFormat(path string, max int) string {
+	if len(path) <= max {
+		return path 
+	}
+
+	return "..." + path[len(path)-max:]
+}

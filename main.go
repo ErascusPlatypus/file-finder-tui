@@ -17,6 +17,7 @@ var (
 	resultStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#123456")).Background(lipgloss.Color("#666666")).Bold(true)
 	viewportStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62"))
+	rightStyle = lipgloss.NewStyle().MarginLeft(4)
 )
 
 type model struct {
@@ -40,7 +41,7 @@ func initialModel() model {
 
 	currDir, _ := os.Getwd()
 
-	vp := viewport.New(60, 20)
+	vp := viewport.New(70, 20)
 	vp.Style = viewportStyle
 
 	return model{
@@ -177,7 +178,7 @@ func (m model) View() string {
 				style = selectedStyle
 			}
 
-			left.WriteString(style.Render(prefix + m.results[i]))
+			left.WriteString(style.Render(fmt.Sprintf("%v", prefix + helper.ResFormat(m.results[i], 40))))
 			left.WriteString("\n")
 			lineCount++
 		}
@@ -205,7 +206,7 @@ func (m model) View() string {
 		}
 	}
 
-	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left.String(), right.String()))
+	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left.String(), rightStyle.Render(right.String())))
 
 	sb.WriteString("\n\nEsc: ")
 	if m.previewing {
