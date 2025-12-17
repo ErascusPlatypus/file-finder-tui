@@ -9,6 +9,8 @@ import (
     "github.com/alecthomas/chroma/v2/styles"
 	"bytes"
 	"os"
+	"os/exec"
+	"path/filepath"
 )
 
 type PreviewMsg struct {
@@ -18,10 +20,24 @@ type PreviewMsg struct {
 
 func LoadPreview(path string) tea.Cmd {
 	return func() tea.Msg {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return PreviewMsg{Content: "Unable to open file", Path: path}
+		ext := filepath.Ext(path)
+		var data string 
+		if ext == ".pdf" {
+			d, err := PdfToText(path)
+			if err != nil {
+				return PreviewMsg{Content: "Unable to open file", Path: path}
+			}
+
+			data = d
+		} else {
+			d, err := os.ReadFile(path)
+			if err != nil {
+				return PreviewMsg{Content: "Unable to open file", Path: path}
+			}
+
+			data = string(d)
 		}
+
 		return PreviewMsg{Content: string(data), Path: path}
 	}
 }
@@ -66,4 +82,15 @@ func ResFormat(path string, max int) string {
 	}
 
 	return "..." + path[len(path)-max:]
+}
+
+func PdfToText(path string) (string, error) {
+	cmd := exec.Command("pdftotext", path, "-")
+	out, err := cmd.Output()
+
+	if err != nil {
+		return "", err 
+	}
+
+	return string(out), nil 
 }
