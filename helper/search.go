@@ -71,3 +71,4 @@ func fuzzyMatch(name, query string) bool {
 	}
 	return qi == len(query)
 }
+

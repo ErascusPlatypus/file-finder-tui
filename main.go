@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -11,13 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/alecthomas/chroma/v2"
-    "github.com/alecthomas/chroma/v2/formatters"
-    "github.com/alecthomas/chroma/v2/lexers"
-    "github.com/alecthomas/chroma/v2/styles"
-
-
 )
 
 var (
@@ -26,55 +18,6 @@ var (
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#123456")).Background(lipgloss.Color("#666666")).Bold(true)
 	viewportStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62"))
 )
-
-type previewMsg struct {
-	content string
-	path string 
-}
-
-func loadPreview(path string) tea.Cmd {
-	return func() tea.Msg {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return previewMsg{content: "Unable to open file", path: path}
-		}
-		return previewMsg{content: string(data), path: path}
-	}
-}
-
-func highlightContent(code, filename string) string {
-    lexer := lexers.Match(filename)
-    if lexer == nil {
-        lexer = lexers.Analyse(code)
-    }
-    if lexer == nil {
-        lexer = lexers.Fallback
-    }
-    lexer = chroma.Coalesce(lexer)
-
-    style := styles.Get("onedark")
-    if style == nil {
-        style = styles.Fallback
-    }
-
-    formatter := formatters.Get("terminal256")
-    if formatter == nil {
-        formatter = formatters.Fallback
-    }
-
-    iterator, err := lexer.Tokenise(nil, code)
-    if err != nil {
-        return code
-    }
-
-    var buf bytes.Buffer
-    err = formatter.Format(&buf, style, iterator)
-    if err != nil {
-        return code
-    }
-
-	return buf.String()
-}
 
 type model struct {
 	textInput  textinput.Model
@@ -170,7 +113,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.previewing = true
-			return m, loadPreview(path)
+			return m, helper.LoadPreview(path)
 		}
 
 	case helper.SearchResults:
@@ -181,8 +124,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.searching = false
 		return m, nil
 
-	case previewMsg:
-		highlightedContent := highlightContent(msg.content, msg.path)
+	case helper.PreviewMsg:
+		highlightedContent := helper.HighlightContent(msg.Content, msg.Path)
 		m.viewport.SetContent(highlightedContent)
 		m.viewport.GotoTop()
 		return m, nil
@@ -214,10 +157,15 @@ func (m model) View() string {
 	sb.WriteString("\n\n")
 
 	var left strings.Builder
+	leftPanelHeight := 15 
+	lineCount := 0 
+
 	if m.searching {
 		left.WriteString("Searching...")
+		lineCount = 1 
 	} else if len(m.results) > 0 {
 		left.WriteString(fmt.Sprintf("Found %d results:\n", len(m.results)))
+		lineCount++ 
 
 		displayCount := min(len(m.results), 15)
 		for i := range displayCount {
@@ -231,19 +179,30 @@ func (m model) View() string {
 
 			left.WriteString(style.Render(prefix + m.results[i]))
 			left.WriteString("\n")
+			lineCount++
 		}
 		if len(m.results) > 15 {
 			left.WriteString(fmt.Sprintf("  ... and %d more\n", len(m.results)-15))
+			lineCount++
 		}
 	} else if m.textInput.Value() != "" {
 		left.WriteString("No results found")
+		lineCount = 1 
+	}
+
+	for range (leftPanelHeight - lineCount) {
+		left.WriteString("\n")
 	}
 
 	var right strings.Builder
+
 	if m.previewing {
 		right.WriteString(m.viewport.View())
 	} else {
 		right.WriteString("  Press Enter to preview file")
+		for i := 1; i < leftPanelHeight ; i++ {
+			right.WriteString("\n")
+		}
 	}
 
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left.String(), right.String()))
