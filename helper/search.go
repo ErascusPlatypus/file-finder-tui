@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,16 @@ import (
 )
 
 type SearchResults []string
+
+type StreamResults struct {
+	Path string 
+	SearchID int
+}
+
+type SearchDone struct {
+	SearchID int 
+	Total int 
+}
 
 var ignoredDirs = map[string]struct{}{
     ".git":         {},
@@ -27,82 +38,111 @@ var ignoredDirs = map[string]struct{}{
     "dist":         {},
 }
 
-var sem = make(chan struct{}, 50)
-const maxResults = 102
+const maxResults = 150
+const maxConcurrency = 50 
 
-func PerformSearch(dir, query string) tea.Cmd {
+var (
+	cancelMutex sync.Mutex
+	cancelFunc context.CancelFunc
+	searchIDGen atomic.Int32
+)
+
+func CancelSearch() {
+	cancelMutex.Lock()
+	defer cancelMutex.Unlock()
+
+	if cancelFunc != nil {
+		cancelFunc()
+		cancelFunc = nil 
+	}
+}
+
+func PerformSearch(dir, query string, program *tea.Program) tea.Cmd {
 	return func() tea.Msg {
 		if query == "" {
-			return SearchResults{}
+			return SearchDone{SearchID: 0, Total: 0}
 		}
+
+		CancelSearch()
+
+		cancelMutex.Lock()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelFunc = cancel
+		searchID := int(searchIDGen.Add(1))
+		cancelMutex.Unlock()
 
 		query = strings.ToLower(query)
 
-		var results []string
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		var count atomic.Int32
+		go func() {
+			var wg sync.WaitGroup
+			var count atomic.Int32
+			var sem = make(chan struct{}, maxConcurrency)
 
-		var search func(dir string)
-		search = func(dir string) {
-			defer wg.Done()
+			var search func(dir string) 
+			search = func(dir string) {
+				defer wg.Done()
 
-			if count.Load() >= maxResults {
-				return  
-			}
-
-			sem <- struct{}{}
-			entries, err := os.ReadDir(dir)
-			<-sem
-
-			if err != nil {
-				return
-			}
-
-			var currResults [] string 
-
-			for _, e := range entries {
+				select {
+				case <-ctx.Done():
+					return 
+				default:
+				}
 
 				if count.Load() >= maxResults {
-					break 
-				}
-				name := e.Name()
-				path := filepath.Join(dir, name)
-
-				if len(name) > 0 && name[0] == '.' {
-					continue 
+					return
 				}
 
-				if e.IsDir() {
-					if _, ok := ignoredDirs[name]; !ok {
-						wg.Add(1)
-						go search(path)
+				sem <- struct{}{}
+				entries, err := os.ReadDir(dir)
+				<- sem 
+
+				if err != nil {
+					return  
+				}
+
+				for _, e := range entries {
+					select {
+					case <- ctx.Done():
+						return 
+					default:
+					}
+
+					if count.Load() >= maxResults {
+						return  
+					}
+
+					name := e.Name()
+					path := filepath.Join(dir, name)
+
+					if len(name) > 0 && name[0] == '.' {
 						continue 
 					}
-				}
 
-				if fuzzyMatch(strings.ToLower(name), query) {
-					currResults = append(currResults, path)
+					if e.IsDir() {
+						if _, ok := ignoredDirs[name]; !ok {
+							wg.Add(1)
+							go search(path)
+						}
+
+						continue
+					}
+
+					if fuzzyMatch(strings.ToLower(name), query) {
+						if count.Add(1) <= maxResults {
+							program.Send(StreamResults{Path: path, SearchID: searchID})
+						}
+					}
 				}
 			}
 
-			if len(currResults) > 0 {
-				mu.Lock()
-				results = append(results, currResults...)
-				count.Store(int32(len(results)))
-				mu.Unlock()
-			}
-		}
+			wg.Add(1)
+			go search(dir)
+			wg.Wait()
 
-		wg.Add(1)
-		go search(dir)
-		wg.Wait()
+			program.Send(SearchDone{SearchID: searchID, Total: int(count.Load())})
+		}()
 
-		if len(results) > maxResults {
-			results = results[:maxResults]
-		}
-
-		return SearchResults(results)
+		return nil 
 	}
 }
 

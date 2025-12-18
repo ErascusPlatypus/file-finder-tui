@@ -3,13 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 	"pro8_tui/helper"
+	"strings"
+	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var (
@@ -19,6 +20,8 @@ var (
 	viewportStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62"))
 	rightStyle = lipgloss.NewStyle().MarginLeft(4)
 )
+
+var program *tea.Program
 
 type model struct {
 	textInput  textinput.Model
@@ -30,6 +33,9 @@ type model struct {
 
 	viewport   viewport.Model
 	previewing bool
+
+	searchID int 
+	debounceID int 
 }
 
 func initialModel() model {
@@ -69,9 +75,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent("")
 				return m, nil
 			}
+			helper.CancelSearch()
 			return m, tea.Quit
 
 		case "ctrl+c":
+			helper.CancelSearch()
 			return m, tea.Quit
 
 		case "down":
@@ -117,13 +125,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, helper.LoadPreview(path)
 		}
 
-	case helper.SearchResults:
-		m.results = msg
-		m.cursor = 0
-		m.previewing = false
-		m.viewport.SetContent("")
-		m.searching = false
-		return m, nil
+	case helper.DebounceMsg:
+		if msg.ID == m.debounceID && msg.Query != "" {
+			m.searchID++ 
+			return m, helper.PerformSearch(m.currentDir, msg.Query, program)
+		}
+
+		return m, nil 
+	
+	case helper.StreamResults:
+		if msg.SearchID == m.searchID {
+			m.results = append(m.results, msg.Path)
+		}
+
+		return m, nil 
+	
+	case helper.SearchDone:
+		if msg.SearchID == m.searchID {
+			m.searching = false 
+		}
+
+		return m, nil 
 
 	case helper.PreviewMsg:
 		highlightedContent := helper.HighlightContent(msg.Content, msg.Path)
@@ -140,10 +162,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.textInput, cmd = m.textInput.Update(msg)
 
 	if m.textInput.Value() != prev {
-		m.searching = true
-		return m, tea.Batch(cmd,
-			helper.PerformSearch(m.currentDir, m.textInput.Value()),
-		)
+		helper.CancelSearch()
+
+		m.results = [] string {} 
+		m.cursor = 0 
+		m.previewing = false 
+		m.viewport.SetContent("")
+
+		query := m.textInput.Value()
+		if query == "" {
+			m.searching = false 
+			return m, cmd 
+		}
+
+		m.searching = true 
+		m.debounceID++ 
+
+		return m, tea.Batch(cmd, helper.Debounce(query, m.debounceID, 150*time.Millisecond))
 	}
 
 	return m, cmd
@@ -161,11 +196,12 @@ func (m model) View() string {
 	leftPanelHeight := 15 
 	lineCount := 0 
 
-	if m.searching {
-		left.WriteString("Searching...")
-		lineCount = 1 
-	} else if len(m.results) > 0 {
-		left.WriteString(fmt.Sprintf("Found %d results:\n", len(m.results)))
+	if m.searching || len(m.results) > 0 {
+		status := "" 
+		if m.searching {
+			status = " ( searching...)"
+		}
+		left.WriteString(fmt.Sprintf("Found %d results%s:\n", len(m.results), status))
 		lineCount++ 
 
 		displayCount := min(len(m.results), 15)
@@ -220,8 +256,8 @@ func (m model) View() string {
 }
 
 func main() {
-	p := tea.NewProgram(initialModel())
-	if _, err := p.Run(); err != nil {
+	program = tea.NewProgram(initialModel())
+	if _, err := program.Run(); err != nil {
 		fmt.Printf("Error: %v", err)
 		os.Exit(1)
 	}
