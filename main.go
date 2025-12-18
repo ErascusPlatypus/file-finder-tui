@@ -36,6 +36,8 @@ type model struct {
 
 	searchID int 
 	debounceID int 
+
+	quitting bool 
 }
 
 func initialModel() model {
@@ -63,8 +65,31 @@ func (m model) Init() tea.Cmd {
 	return textinput.Blink
 }
 
+func (m *model) clearAndQuit() (model, tea.Cmd) {
+	helper.CancelSearch()
+	m.results = [] string{}
+	m.textInput.SetValue("")
+	m.previewing = false
+	m.searching = false 
+	m.viewport.SetContent("")
+	m.cursor = 0 
+	m.quitting = true 
+	
+	return *m, tea.Tick(time.Millisecond*10, func(t time.Time) tea.Msg {
+		return tea.QuitMsg{}
+	})
+} 
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+
+	if _, ok := msg.(tea.QuitMsg); ok {
+		return m, tea.Quit
+	}
+
+	if m.quitting {
+		return m, nil 
+	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -75,12 +100,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent("")
 				return m, nil
 			}
-			helper.CancelSearch()
-			return m, tea.Quit
+			return m.clearAndQuit()
 
 		case "ctrl+c":
-			helper.CancelSearch()
-			return m, tea.Quit
+			return m.clearAndQuit()
 
 		case "down":
 			if m.previewing {
@@ -185,6 +208,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	if m.quitting {
+		return "" 
+	}
 	var sb strings.Builder
 
 	sb.WriteString(titleStyle.Render("File Finder"))
