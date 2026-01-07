@@ -140,7 +140,7 @@ func PerformSearch(dir, query string, program *tea.Program) tea.Cmd {
 			wg.Wait()
 
 			program.Send(SearchDone{SearchID: searchID, Total: int(count.Load())})
-		}()
+		}()	
 
 		return nil 
 	}
